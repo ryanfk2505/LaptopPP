@@ -121,31 +121,25 @@ def load_data():
     return df
 
 # Fungsi bobot Rating — didefinisikan di luar agar bisa di-cache dengan benar
-RATING_WEIGHT = 0.1
+RATING_WEIGHT = 0.3
+PRICE_WEIGHT  = 2.0
 
 def apply_rating_weight(x):
-    """Kecilkan kontribusi Rating ke similarity (0.3 = ~30% dari fitur numerik lain)."""
     return x * RATING_WEIGHT
+
+def apply_price_weight(x):
+    return x * PRICE_WEIGHT
 
 @st.cache_resource
 def load_models():
     df = pd.read_csv('laptop_data.csv')
 
-    # Perubahan 1: HDD_GB ditambahkan, Rating dipisah ke pipeline sendiri
-    main_numerical_cols = ['Price', 'RAM_GB', 'SSD_GB', 'HDD_GB', 'Inches']
+    main_numerical_cols = ['RAM_GB', 'SSD_GB', 'HDD_GB', 'Inches']
     categorical_cols    = ['CPU_Detail', 'GPU_Detail', 'OS_Detail', 'Screen_Resolution_Type']
 
-    # Pipeline numerik utama (tanpa Rating)
     num_transformer = Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler',  StandardScaler())
-    ])
-
-    # Perubahan 2: Rating di-scale lalu bobotnya dikecilkan ke 0.3
-    rating_transformer = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler',  StandardScaler()),
-        ('weight',  FunctionTransformer(apply_rating_weight))
     ])
 
     cat_transformer = Pipeline([
@@ -154,9 +148,18 @@ def load_models():
     ])
 
     preprocessor = ColumnTransformer(transformers=[
-        ('num',    num_transformer,    main_numerical_cols),
-        ('rating', rating_transformer, ['Rating']),
-        ('cat',    cat_transformer,    categorical_cols)
+        ('num',    num_transformer, main_numerical_cols),
+        ('price',  Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler',  StandardScaler()),
+            ('weight',  FunctionTransformer(apply_price_weight))
+        ]), ['Price']),
+        ('rating', Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler',  StandardScaler()),
+            ('weight',  FunctionTransformer(apply_rating_weight))
+        ]), ['Rating']),
+        ('cat',    cat_transformer, categorical_cols)
     ])
 
     X_processed = preprocessor.fit_transform(df)
