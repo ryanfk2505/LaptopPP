@@ -2,23 +2,22 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 import json
-import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer
 from sklearn.compose import ColumnTransformer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+
 # Page config
 st.set_page_config(
     page_title="Laptop Recommendation System",
     layout="wide"
 )
 
-# --- INJEKSI CSS KUSTOM (sama seperti kode Anda) ---
+# --- INJEKSI CSS KUSTOM ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
@@ -121,23 +120,43 @@ def load_data():
     df = pd.read_csv('laptop_data.csv')
     return df
 
-# Load models (VERSION BARU DENGAN ONEHOTENCODER)
+# Fungsi bobot Rating — didefinisikan di luar agar bisa di-cache dengan benar
+RATING_WEIGHT = 0.3
+
+def apply_rating_weight(x):
+    """Kecilkan kontribusi Rating ke similarity (0.3 = ~30% dari fitur numerik lain)."""
+    return x * RATING_WEIGHT
+
 @st.cache_resource
 def load_models():
     df = pd.read_csv('laptop_data.csv')
 
-    numerical_cols = ['Price', 'RAM_GB', 'SSD_GB', 'Inches', 'Rating']
-    categorical_cols = ['CPU_Detail', 'GPU_Detail', 'OS_Detail', 'Screen_Resolution_Type']
+    # Perubahan 1: HDD_GB ditambahkan, Rating dipisah ke pipeline sendiri
+    main_numerical_cols = ['Price', 'RAM_GB', 'SSD_GB', 'HDD_GB', 'Inches']
+    categorical_cols    = ['CPU_Detail', 'GPU_Detail', 'OS_Detail', 'Screen_Resolution_Type']
+
+    # Pipeline numerik utama (tanpa Rating)
+    num_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler',  StandardScaler())
+    ])
+
+    # Perubahan 2: Rating di-scale lalu bobotnya dikecilkan ke 0.3
+    rating_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler',  StandardScaler()),
+        ('weight',  FunctionTransformer(apply_rating_weight))
+    ])
+
+    cat_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='constant', fill_value='Unknown')),
+        ('onehot',  OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
 
     preprocessor = ColumnTransformer(transformers=[
-        ('num', Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ]), numerical_cols),
-        ('cat', Pipeline([
-            ('imputer', SimpleImputer(strategy='constant', fill_value='Unknown')),
-            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-        ]), categorical_cols)
+        ('num',    num_transformer,    main_numerical_cols),
+        ('rating', rating_transformer, ['Rating']),
+        ('cat',    cat_transformer,    categorical_cols)
     ])
 
     X_processed = preprocessor.fit_transform(df)
@@ -219,11 +238,12 @@ if use_screen_filter:
         "Ukuran Layar Minimal (inci)",
         min_value=10.0, max_value=18.0, value=13.0, step=0.1
     )
+
 rating_min = st.sidebar.number_input(
-    "Rating", 
-    min_value=0, 
-    max_value=100, 
-    value=0, 
+    "Rating",
+    min_value=0,
+    max_value=100,
+    value=0,
     step=5,
     help="Masukkan rating minimal (0-100), atau gunakan tombol +/-"
 )
@@ -242,11 +262,12 @@ budget_inr = convert_currency(budget, selected_currency, 'INR', exchange_rates)
 
 def recommend_knn(budget, ram_min, rating_min, n_recommendations=5,
                   cpu_detail=None, gpu_detail=None, screen_size_min=None):
-    
-    numerical_cols = ['Price', 'RAM_GB', 'SSD_GB', 'Inches', 'Rating']
-    categorical_cols = ['CPU_Detail', 'GPU_Detail', 'OS_Detail', 'Screen_Resolution_Type']
 
-    # Satu blok filter, tidak duplikat
+    # Perubahan: kolom harus sama persis dengan yang di-fit preprocessor
+    main_numerical_cols = ['Price', 'RAM_GB', 'SSD_GB', 'HDD_GB', 'Inches']
+    categorical_cols    = ['CPU_Detail', 'GPU_Detail', 'OS_Detail', 'Screen_Resolution_Type']
+    all_feature_cols    = main_numerical_cols + ['Rating'] + categorical_cols
+
     candidates = df_clean[df_clean['Price'] <= budget].copy()
     if ram_min:
         candidates = candidates[candidates['RAM_GB'] >= ram_min]
@@ -262,12 +283,12 @@ def recommend_knn(budget, ram_min, rating_min, n_recommendations=5,
     if len(candidates) == 0:
         return pd.DataFrame(), None
 
-    best_idx = candidates['Rating'].idxmax()
+    best_idx  = candidates['Rating'].idxmax()
     reference = df_clean.loc[best_idx]
 
     reference_df = pd.DataFrame(
-        [reference[categorical_cols + numerical_cols].values],
-        columns=categorical_cols + numerical_cols
+        [reference[all_feature_cols].values],
+        columns=all_feature_cols
     )
     query_processed = preprocessor.transform(reference_df)
 
@@ -288,6 +309,7 @@ def recommend_knn(budget, ram_min, rating_min, n_recommendations=5,
             break
 
     return pd.DataFrame(similar_laptops), reference
+
 # ============================================================
 # MAIN CONTENT
 # ============================================================
@@ -335,7 +357,7 @@ with col2:
                 st.markdown(f"#### Laptop Paling Mirip (Top {len(results_knn)})")
 
                 for idx, row in results_knn.iterrows():
-                    price_conv = convert_currency(row['Price'], 'INR', selected_currency, exchange_rates)
+                    price_conv     = convert_currency(row['Price'], 'INR', selected_currency, exchange_rates)
                     similarity_pct = row['Similarity'] * 100
 
                     expander_title = f"{row['Model'][:50]} {format_currency(price_conv, selected_currency)}  {similarity_pct:.1f}% mirip"
