@@ -230,12 +230,6 @@ rating_min = st.sidebar.number_input(
 n_recs = st.sidebar.slider("Jumlah Hasil Tampilan", 3, 10, 5)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Metode Rekomendasi")
-recommendation_method = st.sidebar.radio(
-    "Pilih algoritma:",
-    ["Filter Standar (Harga + Spesifikasi)", "🤖 KNN Machine Learning (Mirip dengan terbaik)"],
-    help="KNN akan mencari laptop paling mirip dengan laptop rating tertinggi dalam budget Anda"
-)
 
 search_button = st.sidebar.button("Cari Laptop Terbaik", type="primary", use_container_width=True)
 
@@ -245,22 +239,6 @@ budget_inr = convert_currency(budget, selected_currency, 'INR', exchange_rates)
 # ============================================================
 # FUNGSI REKOMENDASI
 # ============================================================
-
-def recommend_laptops(price_max_inr, ram_min=None, cpu_detail=None, gpu_detail=None, screen_size_min=None, rating_min=None, n=5):
-    filtered = df_clean[df_clean['Price'] <= price_max_inr].copy()
-    if ram_min:
-        filtered = filtered[filtered['RAM_GB'] >= ram_min]
-    if cpu_detail:
-        filtered = filtered[filtered['CPU_Detail'].str.contains(cpu_detail, case=False, na=False)]
-    if gpu_detail:
-        filtered = filtered[filtered['GPU_Detail'].str.contains(gpu_detail, case=False, na=False)]
-    if screen_size_min:
-        filtered = filtered[filtered['Inches'] >= screen_size_min]
-    if rating_min:
-        filtered = filtered[filtered['Rating'] >= rating_min]
-    if len(filtered) == 0:
-        return pd.DataFrame()
-    return filtered.sort_values('Price').head(n).reset_index(drop=True)
 
 def recommend_knn(budget, ram_min, rating_min, n_recommendations=5,
                   cpu_detail=None, gpu_detail=None, screen_size_min=None):
@@ -326,82 +304,55 @@ with col1:
         <p><b>Spesifikasi GPU:</b> {gpu_detail if gpu_detail else "Semua"}</p>
         <p><b>Ukuran Layar:</b> {f"{screen_size} Inci" if screen_size else "Semua Ukuran"}</p>
         <p><b>Rating Produk:</b> {rating_min} / 100</p>
-        <p><b>Metode:</b> {recommendation_method}</p>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
     if search_button:
         with st.spinner("Menganalisis database laptop..."):
-            
-            if recommendation_method == "Filter Standar (Harga + Spesifikasi)":
-                results = recommend_laptops(budget_inr, ram_min, cpu_detail, gpu_detail, screen_size, rating_min, n_recs)
-                
-                if len(results) > 0:
-                    st.markdown(f"### Hasil Pencarian ({len(results)} Laptop Ditemukan)")
-                    st.caption("Diurutkan berdasarkan harga termurah")
-                    
-                    for idx, row in results.iterrows():
-                        price_conv = convert_currency(row['Price'], 'INR', selected_currency, exchange_rates)
-                        expander_title = f"{row['Model'][:55]}  {format_currency(price_conv, selected_currency)}"
-                        
-                        with st.expander(expander_title):
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                st.markdown(f"**Harga:** {format_currency(price_conv, selected_currency)}")
-                                st.markdown(f"**RAM:** `{row['RAM_GB']:.0f} GB`")
-                                st.markdown(f"**SSD:** `{row['SSD_GB']:.0f} GB`")
-                            with c2:
-                                st.markdown(f"**Layar:** `{row['Inches']:.1f}\"`")
-                                st.markdown(f"**CPU:** `{row['CPU_Detail'][:50]}`")
-                                st.markdown(f"**Rating:** {row['Rating']:.1f} / 100")
-                else:
-                    st.error("Tidak ada laptop yang sesuai dengan kriteria filter Anda.")
-            
-            else:
-                results_knn, reference = recommend_knn(
-                    budget_inr, ram_min or 0, rating_min or 0, n_recs,
-                    cpu_detail, gpu_detail, screen_size  # ← tambah ini
-                )
-                
-                if len(results_knn) > 0 and reference is not None:
-                    st.markdown("### Rekomendasi KNN (Machine Learning)")
-                    st.caption("Berdasarkan laptop dengan rating tertinggi dalam budget Anda")
-                    
-                    ref_price = convert_currency(reference['Price'], 'INR', selected_currency, exchange_rates)
-                    
-                    with st.expander("LAPTOP REFERENSI (Rating Tertinggi)", expanded=True):
+            results_knn, reference = recommend_knn(
+                budget_inr, ram_min or 0, rating_min or 0, n_recs,
+                cpu_detail, gpu_detail, screen_size
+            )
+
+            if len(results_knn) > 0 and reference is not None:
+                st.markdown("### Rekomendasi KNN (Machine Learning)")
+                st.caption("Berdasarkan laptop dengan rating tertinggi dalam budget Anda")
+
+                ref_price = convert_currency(reference['Price'], 'INR', selected_currency, exchange_rates)
+
+                with st.expander("LAPTOP REFERENSI (Rating Tertinggi)", expanded=True):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**Model:** {reference['Model'][:70]}")
+                        st.markdown(f"**Rating:** {reference['Rating']:.1f} / 100")
+                        st.markdown(f"**Harga:** {format_currency(ref_price, selected_currency)}")
+                    with c2:
+                        st.markdown(f"**RAM:** {reference['RAM_GB']:.0f} GB")
+                        st.markdown(f"**SSD:** {reference['SSD_GB']:.0f} GB")
+                        st.markdown(f"**Layar:** {reference['Inches']:.1f}\"")
+
+                st.markdown(f"#### Laptop Paling Mirip (Top {len(results_knn)})")
+
+                for idx, row in results_knn.iterrows():
+                    price_conv = convert_currency(row['Price'], 'INR', selected_currency, exchange_rates)
+                    similarity_pct = row['Similarity'] * 100
+
+                    expander_title = f"{row['Model'][:50]} {format_currency(price_conv, selected_currency)}  {similarity_pct:.1f}% mirip"
+
+                    with st.expander(expander_title):
                         c1, c2 = st.columns(2)
                         with c1:
-                            st.markdown(f"**Model:** {reference['Model'][:70]}")
-                            st.markdown(f"**Rating:** {reference['Rating']:.1f} / 100")
-                            st.markdown(f"**Harga:** {format_currency(ref_price, selected_currency)}")
+                            st.markdown(f"**Harga:** {format_currency(price_conv, selected_currency)}")
+                            st.markdown(f"**RAM:** {row['RAM_GB']:.0f} GB")
+                            st.markdown(f"**SSD:** {row['SSD_GB']:.0f} GB")
+                            st.markdown(f"**Tingkat Kemiripan:** {similarity_pct:.1f}%")
                         with c2:
-                            st.markdown(f"**RAM:** {reference['RAM_GB']:.0f} GB")
-                            st.markdown(f"**SSD:** {reference['SSD_GB']:.0f} GB")
-                            st.markdown(f"**Layar:** {reference['Inches']:.1f}\"")
-                    
-                    st.markdown(f"#### Laptop Paling Mirip (Top {len(results_knn)})")
-                    
-                    for idx, row in results_knn.iterrows():
-                        price_conv = convert_currency(row['Price'], 'INR', selected_currency, exchange_rates)
-                        similarity_pct = row['Similarity'] * 100
-                        
-                        expander_title = f"{row['Model'][:50]} {format_currency(price_conv, selected_currency)}  {similarity_pct:.1f}% mirip"
-                        
-                        with st.expander(expander_title):
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                st.markdown(f"**Harga:** {format_currency(price_conv, selected_currency)}")
-                                st.markdown(f"**RAM:** {row['RAM_GB']:.0f} GB")
-                                st.markdown(f"**SSD:** {row['SSD_GB']:.0f} GB")
-                                st.markdown(f"**Tingkat Kemiripan:** {similarity_pct:.1f}%")
-                            with c2:
-                                st.markdown(f"**Layar:** {row['Inches']:.1f}\"")
-                                st.markdown(f"**Rating:** {row['Rating']:.1f} / 100")
-                                st.markdown(f"**CPU:** {row['CPU_Detail'][:45]}")
-                else:
-                    st.warning("Tidak ada cukup data untuk rekomendasi KNN. Coba tingkatkan budget atau kurangi filter.")
+                            st.markdown(f"**Layar:** {row['Inches']:.1f}\"")
+                            st.markdown(f"**Rating:** {row['Rating']:.1f} / 100")
+                            st.markdown(f"**CPU:** {row['CPU_Detail'][:45]}")
+            else:
+                st.warning("Tidak ada cukup data untuk rekomendasi KNN. Coba tingkatkan budget atau kurangi filter.")
     else:
         st.info("Atur preferensi Anda di panel sebelah kiri, kemudian klik tombol 'Cari Laptop Terbaik'.")
 
