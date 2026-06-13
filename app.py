@@ -121,7 +121,7 @@ def load_data():
     return df
 
 # Fungsi bobot Rating — didefinisikan di luar agar bisa di-cache dengan benar
-RATING_WEIGHT = 0.3
+RATING_WEIGHT = 0.1
 
 def apply_rating_weight(x):
     """Kecilkan kontribusi Rating ke similarity (0.3 = ~30% dari fitur numerik lain)."""
